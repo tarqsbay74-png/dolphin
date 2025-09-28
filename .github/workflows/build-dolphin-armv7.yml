@@ -6,8 +6,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk  # will be set by the setup-ndk step, but keep fallback
 
     steps:
       - name: Checkout repo (with submodules)
@@ -15,54 +13,45 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Print repository tree (quick check)
-        run: |
-          echo "=== repo root ==="
-          ls -la
-          echo "=== Source tree ==="
-          if [ -d "Source" ]; then ls -R Source | sed -n '1,200p'; else echo "No Source/ folder"; fi
-          echo "=== Externals tree ==="
-          if [ -d "Externals" ]; then ls -R Externals | sed -n '1,200p'; else echo "No Externals/ folder"; fi
-
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config build-essential git
 
       - name: Setup Android NDK
+        id: setup-ndk
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27
 
-      - name: Ensure ANDROID_NDK_HOME
+      - name: Confirm NDK location
         run: |
-          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME}"
-          ls -la ${ANDROID_NDK_HOME} || true
+          echo "NDK root = ${{ steps.setup-ndk.outputs.ndk-root }}"
+          ls -la ${{ steps.setup-ndk.outputs.ndk-root }}/build/cmake/
 
-      - name: Configure (cmake) for ARMv7 no-JIT
+      - name: Configure (CMake) for ARMv7 no-JIT
         run: |
           mkdir -p build
           cd build
           cmake .. \
-            -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
+            -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-root }}/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=armeabi-v7a \
             -DANDROID_PLATFORM=android-21 \
             -DCMAKE_BUILD_TYPE=Release \
             -DENABLE_GENERIC=ON \
             -DDISABLE_JIT=ON \
-            -DDOLPHIN_GENERIC_BUILD=ON
+            -DDOLPHIN_GENERIC_BUILD=ON \
+            -G Ninja
 
       - name: Build (parallel)
         run: |
           cd build
-          cmake --build . -- -j$(nproc)
+          ninja -j$(nproc)
 
       - name: Show build outputs
         run: |
           echo "=== build outputs ==="
-          ls -la build || true
-          ls -la build/outputs || true
-          find build -maxdepth 3 -type f -name "*.so" -print || true
+          find build -type f -name "*.so" -print
 
       - name: Upload built core(s)
         uses: actions/upload-artifact@v4
@@ -70,8 +59,4 @@ jobs:
           name: dolphin-libretro-armv7-nojit
           path: |
             build/*.so
-            build/outputs/*.so
             build/**/dolphin_libretro*.so
-
-      - name: Done
-        run: echo "Workflow finished. Download artifact from Actions -> Run -> Artifacts."
